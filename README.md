@@ -1,2 +1,0 @@
-# Robo-inteligente-
-Garfo
