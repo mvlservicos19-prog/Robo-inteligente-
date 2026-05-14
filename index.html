@@ -165,6 +165,9 @@ if ('serviceWorker' in navigator) {
 // CREDENCIAIS
 // ═══════════════════════════════════════
 var LKEY = "cgrzb084pm55BPLw";
+var AFKEY = "6e5591812cmsh7432f2c4b62d777p1be17bjsnd2e38668a47a";
+var AFHOST = "api-football-v1.p.rapidapi.com";
+var AFBASE = "https://api-football-v1.p.rapidapi.com/v3";
 var LSEC = "aYNLJnQZKP2uDPBQ53qg4yltUrzvgk2q";
 var LBASE = "https://livescore-api.com/api-client";
 var SRV = "https://robo-inteligente-chi.vercel.app";
@@ -680,8 +683,43 @@ function buscarStatsHL(matchId) {
     .catch(function() { return null; });
 }
 
+function buscarStatsAF(id) {
+  if (!id) return Promise.resolve(null);
+  return fetch(AFBASE + '/fixtures/statistics?fixture=' + id, {
+    headers: {
+      'x-rapidapi-key': AFKEY,
+      'x-rapidapi-host': AFHOST,
+      'Accept': 'application/json'
+    }
+  })
+  .then(function(r) { return r.ok ? r.json() : null; })
+  .then(function(d) {
+    if (!d || !d.response || !d.response.length) return null;
+    var mapped = {};
+    var homeStats = d.response[0] && d.response[0].statistics ? d.response[0].statistics : [];
+    var awayStats = d.response[1] && d.response[1].statistics ? d.response[1].statistics : [];
+    homeStats.forEach(function(item, idx) {
+      var awayItem = awayStats[idx] || {};
+      var key = (item.type||'').toLowerCase().replace(/ /g,'_');
+      var hv = item.value !== null ? item.value : 0;
+      var av = awayItem.value !== null ? awayItem.value : 0;
+      mapped[key] = hv + ':' + av;
+      if (key === 'shots_on_goal') mapped['shots_on_target'] = mapped[key];
+      if (key === 'corner_kicks') mapped['corners'] = mapped[key];
+      if (key === 'ball_possession') mapped['possesion'] = mapped[key];
+      if (key === 'total_shots') mapped['attacks'] = mapped[key];
+    });
+    return Object.keys(mapped).length > 2 ? { data: mapped } : null;
+  })
+  .catch(function() { return null; });
+}
+
 function buscarStats(id, home, away) {
   if (!id) return Promise.resolve(null);
+  // Tenta API-Football primeiro (sem bloqueio de domínio!)
+  return buscarStatsAF(id).then(function(st) {
+    if (st) return st;
+    // Fallback: LiveScore API
   var url = LBASE + '/scores/statistics.json?key=' + LKEY + '&secret=' + LSEC + '&match_id=' + id;
   return fetch(url, { headers: { 'Accept': 'application/json' } })
     .then(function(r) { return r.ok ? r.json() : null; })
@@ -706,8 +744,72 @@ function buscarStats(id, home, away) {
       return st && Object.keys(st).length > 1 ? { data: st } : null;
     })
     .catch(function() { return null; });
+  });
 }
 
+function buscarJogosAF() {
+  // API-Football - sem restrição de domínio, stats completas!
+  return fetch(AFBASE + "/fixtures?live=all", {
+    headers: {
+      "x-rapidapi-key": AFKEY,
+      "x-rapidapi-host": AFHOST,
+      "Accept": "application/json"
+    }
+  })
+  .then(function(r) { return r.ok ? r.json() : null; })
+  .then(function(d) {
+    if (!d || !d.response) return null;
+    return d.response.map(function(f) {
+      var home = f.teams && f.teams.home ? f.teams.home.name : "Casa";
+      var away = f.teams && f.teams.away ? f.teams.away.name : "Fora";
+      var goals = f.goals || {};
+      var g1 = goals.home || 0;
+      var g2 = goals.away || 0;
+      var min = f.fixture && f.fixture.status ? f.fixture.status.elapsed || 0 : 0;
+      var liga = f.league ? f.league.name : "";
+      var isCup = f.league ? !!f.league.type && f.league.type !== "League" : false;
+      var fixtureId = f.fixture ? f.fixture.id : null;
+
+      // Stats ja incluidas no response!
+      var statsEmbutidas = null;
+      if (f.statistics && f.statistics.length > 0) {
+        var sObj = {};
+        var homeStats = f.statistics[0] && f.statistics[0].statistics ? f.statistics[0].statistics : [];
+        var awayStats = f.statistics[1] && f.statistics[1].statistics ? f.statistics[1].statistics : [];
+        homeStats.forEach(function(item, idx) {
+          var awayItem = awayStats[idx] || {};
+          var key = (item.type||'').toLowerCase().replace(/ /g,'_');
+          sObj[key] = (item.value||'0') + ':' + (awayItem.value||'0');
+        });
+        // Mapear para formato padrao
+        var mapped = {};
+        if (sObj.shots_on_goal) mapped.shots_on_target = sObj.shots_on_goal;
+        if (sObj.shots_on_target) mapped.shots_on_target = sObj.shots_on_target;
+        if (sObj.corner_kicks) mapped.corners = sObj.corner_kicks;
+        if (sObj.fouls) mapped.fouls = sObj.fouls;
+        if (sObj.yellow_cards) mapped.yellow_cards = sObj.yellow_cards;
+        if (sObj.red_cards) mapped.red_cards = sObj.red_cards;
+        if (sObj.ball_possession) mapped.possesion = sObj.ball_possession;
+        if (sObj.expected_goals) mapped.expected_goals = sObj.expected_goals;
+        if (Object.keys(mapped).length > 0) statsEmbutidas = { data: mapped };
+      }
+
+      return {
+        id: fixtureId,
+        jogo: home + " " + g1 + "x" + g2 + " " + away,
+        placar: g1 + "-" + g2,
+        minuto: min,
+        liga: liga,
+        isCup: isCup,
+        home: home,
+        away: away,
+        statsEmbutidas: statsEmbutidas,
+        source: "api-football"
+      };
+    }).filter(function(j) { return j.minuto > 0; });
+  })
+  .catch(function() { return null; });
+}
 
 function buscarJogos() {
   var url = LBASE + "/scores/live.json?key=" + LKEY + "&secret=" + LSEC;
@@ -1020,7 +1122,14 @@ function doScan() {
 
       var hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
       var comStats = analisados.filter(function(j){return j.temStats;}).length;
-        setSt("ok", "✅ " + todos.length + " ao vivo · " + naJanela.length + " na janela · " + vd.length + " sinal(is) · stats: " + comStats + "/" + analisados.length + " · " + hora);
+        setSt("ok", "✅ " + todos.length + " ao vivo · " + naJanela.length + " na janela · stats: " + comStats + "/" + analisados.length + " · " + hora);
+        // Debug: mostra campos do primeiro jogo
+        if (todos.length > 0 && todos[0].rawData) {
+          var rd = todos[0].rawData;
+          var campos = Object.keys(rd).join(", ");
+          var dbgEl = document.getElementById("debug-box");
+          if (dbgEl) dbgEl.innerHTML = "<b>Campos API:</b> " + campos + "<br/><b>Exemplo:</b> " + JSON.stringify(rd).substring(0,300);
+        }
     })
     .catch(function(e) {
       setSt("err", "❌ " + e.message);
