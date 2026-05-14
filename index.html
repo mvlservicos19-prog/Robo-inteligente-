@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -683,8 +682,7 @@ function buscarStatsHL(matchId) {
 
 function buscarStats(id, home, away) {
   if (!id) return Promise.resolve(null);
-  // Usa proxy do Vercel para buscar stats
-  var url = SRV + '/api/stats?type=stats&match_id=' + id;
+  var url = LBASE + '/scores/statistics.json?key=' + LKEY + '&secret=' + LSEC + '&match_id=' + id;
   return fetch(url, { headers: { 'Accept': 'application/json' } })
     .then(function(r) { return r.ok ? r.json() : null; })
     .then(function(data) {
@@ -693,23 +691,26 @@ function buscarStats(id, home, away) {
       if (data.data && data.data.match && data.data.match.stats) st = data.data.match.stats;
       else if (data.data && data.data.stats) st = data.data.stats;
       else if (data.stats) st = data.stats;
-      else if (data.data) st = data.data;
+      else if (data.data && typeof data.data === 'object') st = data.data;
       if (Array.isArray(st)) {
         var obj = {};
         st.forEach(function(item) {
-          if (item.type) obj[item.type] = (item.home||'0') + ':' + (item.away||'0');
+          if (item.type) {
+            obj[item.type] = (item.home||'0') + ':' + (item.away||'0');
+            if (item.type==='shots_on_goal') obj['shots_on_target']=obj[item.type];
+            if (item.type==='corner_kicks') obj['corners']=obj[item.type];
+          }
         });
         st = obj;
       }
-      return st && Object.keys(st).length > 2 ? { data: st } : null;
+      return st && Object.keys(st).length > 1 ? { data: st } : null;
     })
     .catch(function() { return null; });
-  // Fallback antigo desativado
 }
 
 
 function buscarJogos() {
-  var url = SRV + "/api/stats?type=live";
+  var url = LBASE + "/scores/live.json?key=" + LKEY + "&secret=" + LSEC;
   return fetch(url, { 
       headers: { "Accept": "application/json", "Cache-Control": "no-cache" },
       mode: "cors",
